@@ -10,6 +10,19 @@ import java.net.NetworkInterface
 
 enum class Screen { HOME, RECEIVE, SEND }
 enum class TState { ACTIVE, DONE, FAILED }
+enum class Cat(val label: String) {
+    PHOTOS("Photos"), VIDEOS("Videos"), MUSIC("Music"), APPS("Apps"), DOCS("Docs"), FILES("Files")
+}
+
+/** One row in the in-app file picker. sub = package name for apps. */
+data class Entry(
+    val key: String,
+    val name: String,
+    val uri: Uri,
+    val size: Long,
+    val isDir: Boolean = false,
+    val sub: String = "",
+)
 
 data class TItem(val id: Long, val name: String, val total: Long, val done: Long, val state: TState)
 data class SendFile(val uri: Uri, val name: String, val size: Long)
