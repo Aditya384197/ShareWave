@@ -90,3 +90,19 @@ fun fmtBytes(b: Long): String {
     if (mb < 1024) return "%.1f MB".format(mb)
     return "%.2f GB".format(mb / 1024)
 }
+
+data class Stats(
+    val total: Long = 0,
+    val done: Long = 0,
+    val bps: Double = 0.0,
+    val etaSec: Long = -1,
+    val filesDone: Int = 0,
+    val filesTotal: Int = 0,
+    val active: Boolean = false,
+)
+
+fun fmtSpeed(bps: Double): String =
+    "%.1f MB/s  •  %.0f Mbps".format(bps / 1048576.0, bps * 8 / 1_000_000.0)
+
+fun fmtEta(sec: Long): String =
+    if (sec < 0) "--:--" else "%d:%02d".format(sec / 60, sec % 60)

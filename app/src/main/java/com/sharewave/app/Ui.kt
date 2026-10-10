@@ -47,6 +47,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.aspectRatio
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -131,26 +140,57 @@ fun HomeScreen(vm: AppVM) {
     val sendLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (needAllFiles()) manageLauncher.launch(allFilesIntent(ctx.packageName)) else vm.openSend()
     }
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Image(
-            painterResource(R.drawable.logo), null,
-            Modifier.size(128.dp).clip(RoundedCornerShape(30.dp)),
-            contentScale = ContentScale.Fit,
-        )
-        Spacer(Modifier.height(16.dp))
-        Text("ShareWave", fontSize = 32.sp, fontWeight = FontWeight.Bold)
-        Text("Fast offline file transfer", color = Color.Gray)
-        Spacer(Modifier.height(36.dp))
-        BigCard("⬆", "Send", "Choose files, then scan QR", MaterialTheme.colorScheme.primary, Color.White) {
-            sendLauncher.launch(sendPerms)
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            Modifier.weight(1f).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Image(
+                painterResource(R.drawable.logo), null,
+                Modifier.size(160.dp).clip(RoundedCornerShape(36.dp)),
+                contentScale = ContentScale.Fit,
+            )
+            Spacer(Modifier.height(16.dp))
+            Text("ShareWave", fontSize = 34.sp, fontWeight = FontWeight.Bold)
+            Text("Fast offline file transfer", color = Color.Gray)
+            Spacer(Modifier.height(24.dp))
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("कैसे इस्तेमाल करें", fontWeight = FontWeight.Bold)
+                    Text("1. रिसीव करने वाला 'Receive' दबाए, QR दिखेगा", fontSize = 13.sp)
+                    Text("2. भेजने वाला 'Send' दबाकर फाइलें चुने", fontSize = 13.sp)
+                    Text("3. 'Scan QR & Send' दबाकर QR स्कैन करे", fontSize = 13.sp)
+                    Text("Wi-Fi और Location ON रखें, इंटरनेट नहीं चाहिए", fontSize = 12.sp, color = Color.Gray)
+                }
+            }
         }
-        Spacer(Modifier.height(16.dp))
-        BigCard("⬇", "Receive", "Show QR to the sender", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer) {
-            recvLauncher.launch(recvPerms)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            SquareButton("⬆", "Send", MaterialTheme.colorScheme.primary, Color.White, Modifier.weight(1f)) {
+                sendLauncher.launch(sendPerms)
+            }
+            SquareButton("⬇", "Receive", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer, Modifier.weight(1f)) {
+                recvLauncher.launch(recvPerms)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("v${BuildConfig.VERSION_NAME}", fontSize = 11.sp, color = Color.LightGray)
+    }
+}
+
+@Composable
+fun SquareButton(icon: String, title: String, bg: Color, fg: Color, modifier: Modifier, onClick: () -> Unit) {
+    Card(
+        modifier.aspectRatio(1.1f).clip(RoundedCornerShape(28.dp)).clickable(onClick = onClick),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = bg, contentColor = fg),
+    ) {
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text(icon, fontSize = 54.sp)
+            Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -178,22 +218,92 @@ fun ReceiveScreen(vm: AppVM) {
     val qr by vm.qr.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
     val transfers by vm.items.collectAsStateWithLifecycle()
-    Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    val stats by vm.stats.collectAsStateWithLifecycle()
+    val receiving = transfers.isNotEmpty()
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Header("Receive", vm)
-        Spacer(Modifier.height(12.dp))
-        val bmp = qr
-        if (bmp == null) {
-            Box(Modifier.size(280.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        } else {
-            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-                Image(bmp.asImageBitmap(), "QR", Modifier.padding(12.dp).size(280.dp))
+        AnimatedVisibility(
+            visible = !receiving,
+            enter = fadeIn(tween(400)) + expandVertically(tween(400)),
+            exit = fadeOut(tween(250)) + shrinkVertically(tween(300)),
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(Modifier.height(12.dp))
+                Box(Modifier.size(300.dp), contentAlignment = Alignment.Center) {
+                    val bmp = qr
+                    if (bmp == null) CircularProgressIndicator()
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = bmp != null,
+                        enter = fadeIn(tween(500)) + scaleIn(tween(500), initialScale = 0.85f),
+                    ) {
+                        if (bmp != null) {
+                            Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                                Image(bmp.asImageBitmap(), "QR", Modifier.padding(14.dp).size(300.dp))
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(status, textAlign = TextAlign.Center, color = Color.DarkGray)
+                TextButton({ vm.startReceive() }) { Text("🔄  New QR code") }
             }
         }
-        Spacer(Modifier.height(12.dp))
-        Text(status, textAlign = TextAlign.Center, color = Color.DarkGray)
-        Spacer(Modifier.height(12.dp))
-        TransferList(transfers, Modifier.weight(1f))
-        Text("Saved in Downloads/ShareWave", fontSize = 12.sp, color = Color.Gray)
+        AnimatedVisibility(visible = receiving, enter = fadeIn(tween(400)) + expandVertically(tween(400))) {
+            Column {
+                Spacer(Modifier.height(8.dp))
+                StatsPanel(stats, "Receiving")
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+        if (receiving) TransferList(transfers, Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+        Text("Saved in Downloads/ShareWave", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
+    }
+}
+
+@Composable
+fun StatsPanel(s: Stats, verb: String) {
+    val prog = if (s.total > 0) (s.done.toFloat() / s.total).coerceIn(0f, 1f) else 0f
+    val anim by animateFloatAsState(prog, tween(450), label = "progress")
+    val finished = !s.active && s.total > 0 && s.done >= s.total
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    progress = { anim },
+                    modifier = Modifier.size(150.dp),
+                    strokeWidth = 12.dp,
+                    trackColor = MaterialTheme.colorScheme.primaryContainer,
+                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(if (finished) "✔" else "${(anim * 100).toInt()}%", fontSize = 34.sp, fontWeight = FontWeight.Bold)
+                    Text(if (finished) "Done" else verb, fontSize = 12.sp, color = Color.Gray)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(
+                if (s.active) fmtSpeed(s.bps) else if (finished) "Transfer complete" else "Waiting…",
+                fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                StatItem("Transferred", "${fmtBytes(s.done)} / ${fmtBytes(s.total)}")
+                StatItem("Remaining", fmtBytes(maxOf(s.total - s.done, 0L)))
+                StatItem("Time left", if (s.active) fmtEta(s.etaSec) else "--:--")
+                StatItem("Files", "${s.filesDone} / ${s.filesTotal}")
+            }
+        }
+    }
+}
+
+@Composable
+fun StatItem(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text(label, fontSize = 10.sp, color = Color.Gray)
     }
 }
 
@@ -208,6 +318,7 @@ fun SendScreen(vm: AppVM) {
     val loading by vm.loading.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val dir by vm.dir.collectAsStateWithLifecycle()
+    val stats by vm.stats.collectAsStateWithLifecycle()
 
     val scan = rememberLauncherForActivityResult(ScanContract()) { r -> r.contents?.let { vm.startSend(it) } }
     val manage = rememberLauncherForActivityResult(StartActivityForResult()) { vm.load() }
@@ -224,9 +335,10 @@ fun SendScreen(vm: AppVM) {
         Header("Send", vm)
         if (inTransfer) {
             Spacer(Modifier.height(8.dp))
-            Text(status, color = Color.DarkGray)
-            if (busy) { Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            Spacer(Modifier.height(12.dp))
+            Text(status, color = Color.DarkGray, modifier = Modifier.align(Alignment.CenterHorizontally))
+            if (busy && transfers.isEmpty()) { Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            Spacer(Modifier.height(8.dp))
+            if (transfers.isNotEmpty()) { StatsPanel(stats, "Sending"); Spacer(Modifier.height(8.dp)) }
             TransferList(transfers, Modifier.weight(1f))
             Button({ vm.backToPick() }, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                 Text("Send more files")

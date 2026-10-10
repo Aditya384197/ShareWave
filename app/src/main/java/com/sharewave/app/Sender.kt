@@ -98,7 +98,7 @@ object Sender {
         }
     }
 
-    fun upload(ctx: Context, t: Target, p: Pairing, f: SendFile, id: Long, report: (TItem) -> Unit) {
+    fun upload(ctx: Context, t: Target, p: Pairing, f: SendFile, id: Long, batch: String, report: (TItem) -> Unit) {
         var size = f.size
         var temp: File? = null
         try {
@@ -106,7 +106,7 @@ object Sender {
             if (size <= 0) {
                 val tf = File.createTempFile("sw", null, ctx.cacheDir)
                 temp = tf
-                ctx.contentResolver.openInputStream(f.uri)!!.use { i -> tf.outputStream().use { o -> i.copyTo(o, 256 * 1024) } }
+                ctx.contentResolver.openInputStream(f.uri)!!.use { i -> tf.outputStream().use { o -> i.copyTo(o, 1024 * 1024) } }
                 size = tf.length()
                 stream = tf.inputStream()
             } else {
@@ -121,13 +121,14 @@ object Sender {
             c.readTimeout = 120000
             c.setFixedLengthStreamingMode(size)
             c.setRequestProperty("X-Token", p.token)
+            c.setRequestProperty("X-Batch", batch)
             c.setRequestProperty("X-Name", URLEncoder.encode(f.name, "UTF-8").replace("+", "%20"))
             c.setRequestProperty("Content-Type", "application/octet-stream")
             var done = 0L
             var last = 0L
             stream.use { inp ->
                 c.outputStream.use { out ->
-                    val buf = ByteArray(256 * 1024)
+                    val buf = ByteArray(1024 * 1024)
                     while (true) {
                         val n = inp.read(buf)
                         if (n < 0) break

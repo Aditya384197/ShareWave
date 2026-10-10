@@ -5,7 +5,9 @@ import android.content.ContentUris
 import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.net.Uri
+import android.content.Context
 import android.net.wifi.WifiManager
+import android.os.SystemClock
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -18,6 +20,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -32,6 +35,12 @@ class AppVM(app: Application) : AndroidViewModel(app) {
     val status = MutableStateFlow("")
     val qr = MutableStateFlow<Bitmap?>(null)
     val busy = MutableStateFlow(false)
+    val stats = MutableStateFlow(Stats())
+
+    private var batchId = ""
+    private var batchBytes = 0L
+    private var batchCount = 0
+    private var wifiLock: WifiManager.WifiLock? = null
 
     // picker state
     val cat = MutableStateFlow(Cat.PHOTOS)
@@ -46,6 +55,64 @@ class AppVM(app: Application) : AndroidViewModel(app) {
     private var loadJob: Job? = null
     private val handler = Handler(Looper.getMainLooper())
 
+    init {
+        viewModelScope.launch {
+            var lastDone = 0L
+            var lastT = SystemClock.elapsedRealtime()
+            var ema = 0.0
+            while (true) {
+                delay(500)
+                val now = SystemClock.elapsedRealtime()
+                val l = items.value
+                if (l.isEmpty()) {
+                    lastDone = 0; ema = 0.0; lastT = now
+                    if (stats.value.total != 0L) stats.value = Stats()
+                    continue
+                }
+                val done = l.sumOf { it.done }
+                val active = l.any { it.state == TState.ACTIVE }
+                val dt = (now - lastT) / 1000.0
+                val inst = ((done - lastDone) / dt).coerceAtLeast(0.0)
+                ema = if (ema == 0.0) inst else ema * 0.6 + inst * 0.4
+                if (!active) ema = 0.0
+                lastDone = done
+                lastT = now
+                val total = maxOf(batchBytes, l.sumOf { it.total })
+                val eta = if (ema > 1024) ((total - done) / ema).toLong() else -1L
+                stats.value = Stats(
+                    total, done, ema, eta,
+                    l.count { it.state == TState.DONE },
+                    maxOf(batchCount, l.size),
+                    active,
+                )
+            }
+        }
+    }
+
+    private fun lockWifi() {
+        try {
+            if (wifiLock == null) {
+                val wm = getApplication<Application>().applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "ShareWave").apply { setReferenceCounted(false) }
+            }
+            wifiLock?.acquire()
+        } catch (_: Exception) {}
+    }
+
+    private fun unlockWifi() {
+        try { if (wifiLock?.isHeld == true) wifiLock?.release() } catch (_: Exception) {}
+    }
+
+    private fun onBatch(id: String, bytes: Long, count: Int) {
+        if (id != batchId) {
+            // a new sender batch started: clear the previous finished list
+            if (items.value.none { it.state == TState.ACTIVE }) items.value = emptyList()
+            batchId = id
+        }
+        batchBytes = bytes
+        batchCount = count
+    }
+
     private fun upsert(i: TItem) = items.update { l ->
         if (l.any { it.id == i.id }) l.map { if (it.id == i.id) i else it } else l + i
     }
@@ -56,9 +123,11 @@ class AppVM(app: Application) : AndroidViewModel(app) {
         screen.value = Screen.RECEIVE
         items.value = emptyList()
         qr.value = null
+        batchId = ""; batchBytes = 0; batchCount = 0
+        lockWifi()
         status.value = "Preparing…"
         val token = UUID.randomUUID().toString().take(8)
-        val srv = ReceiverServer(getApplication(), token) { upsert(it) }
+        val srv = ReceiverServer(getApplication(), token, { id, b, c -> onBatch(id, b, c) }, { upsert(it) })
         try { srv.start() } catch (e: Exception) { status.value = "Server error: ${e.message}"; return }
         server = srv
         var decided = false
@@ -94,6 +163,7 @@ class AppVM(app: Application) : AndroidViewModel(app) {
         stopAll()
         selected.value = emptyMap()
         items.value = emptyList()
+        batchBytes = 0; batchCount = 0
         status.value = ""
         dir.value = Environment.getExternalStorageDirectory()
         cat.value = Cat.PHOTOS
@@ -226,6 +296,11 @@ class AppVM(app: Application) : AndroidViewModel(app) {
         items.value = emptyList()
         busy.value = true
         status.value = "Connecting…"
+        batchBytes = list.sumOf { maxOf(it.size, 0L) }
+        batchCount = list.size
+        val bid = UUID.randomUUID().toString().take(8)
+        val batch = "$bid:$batchBytes:$batchCount"
+        lockWifi()
         val ctx = getApplication<Application>()
         sendJob = viewModelScope.launch(Dispatchers.IO) {
             var target: Target? = null
@@ -236,7 +311,7 @@ class AppVM(app: Application) : AndroidViewModel(app) {
                 val t = target
                 coroutineScope {
                     list.mapIndexed { idx, f ->
-                        async { sem.withPermit { Sender.upload(ctx, t, p, f, idx.toLong()) { upsert(it) } } }
+                        async { sem.withPermit { Sender.upload(ctx, t, p, f, idx.toLong(), batch) { upsert(it) } } }
                     }.awaitAll()
                 }
                 status.value = if (items.value.all { it.state == TState.DONE }) "All files sent ✔" else "Some files failed"
@@ -246,6 +321,7 @@ class AppVM(app: Application) : AndroidViewModel(app) {
                 status.value = "Error: ${e.message}"
             } finally {
                 target?.close()
+                unlockWifi()
                 busy.value = false
             }
         }
@@ -261,6 +337,7 @@ class AppVM(app: Application) : AndroidViewModel(app) {
         sendJob?.cancel()
         sendJob = null
         loadJob?.cancel()
+        unlockWifi()
         busy.value = false
     }
 

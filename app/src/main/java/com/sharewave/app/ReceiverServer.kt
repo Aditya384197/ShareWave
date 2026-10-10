@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicLong
 class ReceiverServer(
     private val ctx: Context,
     private val token: String,
+    private val onBatch: (id: String, bytes: Long, count: Int) -> Unit,
     private val onUpdate: (TItem) -> Unit,
 ) {
     private var ss: ServerSocket? = null
@@ -30,7 +31,10 @@ class ReceiverServer(
     val port: Int get() = ss?.localPort ?: 0
 
     fun start() {
-        val s = ServerSocket(0, 64)
+        val s = ServerSocket()
+        s.receiveBufferSize = 1 shl 20
+        s.reuseAddress = true
+        s.bind(java.net.InetSocketAddress(0), 64)
         ss = s
         Thread {
             while (!s.isClosed) {
@@ -54,7 +58,7 @@ class ReceiverServer(
             s.use {
                 s.soTimeout = 30000
                 s.tcpNoDelay = true
-                val inp = BufferedInputStream(s.getInputStream(), 1 shl 16)
+                val inp = BufferedInputStream(s.getInputStream(), 1 shl 18)
                 val out = s.getOutputStream()
                 val head = readHead(inp) ?: return
                 val lines = head.split("\r\n")
@@ -93,6 +97,9 @@ class ReceiverServer(
     private fun receive(inp: InputStream, out: OutputStream, h: Map<String, String>) {
         val name = sanitize(URLDecoder.decode(h["x-name"] ?: "file", "UTF-8"))
         val total = h["content-length"]?.toLongOrNull() ?: run { reply(out, 411, "length required"); return }
+        h["x-batch"]?.split(":")?.let {
+            if (it.size == 3) onBatch(it[0], it[1].toLongOrNull() ?: 0L, it[2].toIntOrNull() ?: 0)
+        }
         val id = ids.incrementAndGet()
         val r = ctx.contentResolver
         val ext = name.substringAfterLast('.', "").lowercase()
@@ -109,7 +116,7 @@ class ReceiverServer(
         try {
             onUpdate(TItem(id, name, total, 0, TState.ACTIVE))
             r.openOutputStream(uri)!!.use { o ->
-                val buf = ByteArray(256 * 1024)
+                val buf = ByteArray(1024 * 1024)
                 var last = 0L
                 while (done < total) {
                     val want = minOf(buf.size.toLong(), total - done).toInt()
